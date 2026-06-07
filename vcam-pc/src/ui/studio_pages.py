@@ -359,6 +359,11 @@ class DashboardPage(ctk.CTkFrame):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
+        # Pending ``after`` id for the debounced zoom-slider broadcast.
+        # Dragging the slider fires the command callback continuously;
+        # we coalesce the disk save + adb broadcast onto the last value.
+        self._zoom_save_after = None
+
         self._build_sidebar()
         self._build_main()
 
@@ -1009,6 +1014,53 @@ class DashboardPage(ctk.CTkFrame):
         _muted(
             bypass_row,
             "ค่าแนะนำคือกล้องหลัง เพื่อให้ TikTok ตรวจหน้าได้ตามปกติ",
+        ).pack(side="left", padx=(10, 0))
+
+        # Live zoom — drives FlipRenderer's GL scale on the phone over
+        # adb broadcast (no re-encode). Customers reported the clip
+        # "ชอบซูมเข้า" when its aspect ratio differs from the camera
+        # surface; dragging below 1.0x zooms back out. The value is
+        # per-device and applied instantly to a patched, online phone.
+        zoom_row = ctk.CTkFrame(rot, fg_color="transparent")
+        zoom_row.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 16))
+        _muted(zoom_row, "ซูมภาพ:").pack(side="left", padx=(0, 8))
+        self.zoom_var = ctk.DoubleVar(value=1.0)
+        self.zoom_slider = ctk.CTkSlider(
+            zoom_row,
+            from_=0.5,
+            to=2.0,
+            number_of_steps=30,
+            variable=self.zoom_var,
+            command=self._on_zoom_change,
+            fg_color=THEME.bg_input,
+            progress_color=THEME.primary,
+            button_color=THEME.primary,
+            button_hover_color=THEME.primary_hover,
+            width=200,
+        )
+        self.zoom_slider.pack(side="left")
+        self.lbl_zoom_value = ctk.CTkLabel(
+            zoom_row,
+            text="1.0x",
+            text_color=THEME.fg_secondary,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            width=48,
+        )
+        self.lbl_zoom_value.pack(side="left", padx=(10, 0))
+        self.btn_zoom_reset = ctk.CTkButton(
+            zoom_row,
+            text="รีเซ็ต",
+            width=60,
+            command=self._on_zoom_reset,
+            fg_color=THEME.bg_input,
+            hover_color=THEME.bg_hover,
+            text_color=THEME.fg_secondary,
+            font=ctk.CTkFont(size=12),
+        )
+        self.btn_zoom_reset.pack(side="left", padx=(10, 0))
+        _muted(
+            zoom_row,
+            "ถ้าภาพถูกซูมเข้ามากไป ลดค่าให้ต่ำกว่า 1.0x",
         ).pack(side="left", padx=(10, 0))
 
         # Audio card — separate audio file overrides the MP4's audio.
@@ -1707,11 +1759,14 @@ class DashboardPage(ctk.CTkFrame):
             self.btn_audio_clear.configure(state="disabled")
         self.lbl_audio_status.configure(text="")
 
-        # Rotation/mirror
+        # Rotation/mirror/zoom
         self.rotation_var.set(e.rotation)
         self.mirror_h_var.set(e.mirror_h)
         self.mirror_v_var.set(e.mirror_v)
         self.bypass_facing_var.set(self._bypass_facing_to_label(e.bypass_facing))
+        zoom = float(getattr(e, "zoom", 1.0) or 1.0)
+        self.zoom_var.set(zoom)
+        self.lbl_zoom_value.configure(text=f"{zoom:.2f}x")
 
         # Patch button text
         if e.is_patched():
@@ -2649,6 +2704,7 @@ class DashboardPage(ctk.CTkFrame):
                 rotation_deg=int(getattr(e, "rotation", 0)),
                 flip_x=bool(getattr(e, "mirror_h", False)),
                 flip_y=bool(getattr(e, "mirror_v", False)),
+                zoom=float(getattr(e, "zoom", 1.0) or 1.0),
                 bypass_facing=getattr(e, "bypass_facing", "back"),
                 serial=self.app.adb_id_for(e),
             )
@@ -3689,6 +3745,7 @@ class DashboardPage(ctk.CTkFrame):
                     rotation_deg=int(self.rotation_var.get()),
                     flip_x=bool(self.mirror_h_var.get()),
                     flip_y=bool(self.mirror_v_var.get()),
+                    zoom=float(self.zoom_var.get()),
                     bypass_facing=facing,
                     serial=self.app.adb_id_for(e),
                 )
@@ -3720,6 +3777,7 @@ class DashboardPage(ctk.CTkFrame):
                     rotation_deg=int(self.rotation_var.get()),
                     flip_x=bool(self.mirror_h_var.get()),
                     flip_y=bool(self.mirror_v_var.get()),
+                    zoom=float(self.zoom_var.get()),
                     bypass_facing=getattr(e, "bypass_facing", "back"),
                     serial=self.app.adb_id_for(e),
                 )
@@ -3727,6 +3785,63 @@ class DashboardPage(ctk.CTkFrame):
                 log.exception("broadcast_flip_transform_to_tiktok failed")
 
         threading.Thread(target=_poke_tiktok_transform, daemon=True).start()
+
+    def _on_zoom_change(self, _value: float | None = None) -> None:
+        """Live-update the per-device GL zoom from the slider.
+
+        Persisting + broadcasting are debounced (250 ms) so dragging
+        the slider doesn't fire a flurry of disk writes and ``am
+        broadcast`` calls; only the value you settle on is committed.
+        The on-screen label updates immediately for responsiveness.
+        """
+        e = self.app.selected_entry()
+        if e is None:
+            return
+        zoom = float(self.zoom_var.get())
+        self.lbl_zoom_value.configure(text=f"{zoom:.2f}x")
+        # In-memory update is cheap + lock-guarded; keep it eager so a
+        # device switch mid-drag never loses the latest value.
+        self.app.devices_lib.update_transform(e.serial, zoom=zoom)
+        if self._zoom_save_after is not None:
+            try:
+                self.after_cancel(self._zoom_save_after)
+            except Exception:  # noqa: BLE001
+                pass
+        self._zoom_save_after = self.after(
+            250, lambda s=e.serial: self._commit_zoom(s)
+        )
+
+    def _commit_zoom(self, serial: str) -> None:
+        self._zoom_save_after = None
+        e = self.app.devices_lib.get(serial)
+        if e is None:
+            return
+        self.app.save_devices()
+        if not self.app.is_online(serial):
+            return
+
+        def _poke_zoom() -> None:
+            try:
+                from ..hook_mode import TIKTOK_PACKAGE_DEFAULT
+
+                pkg = e.tiktok_package or TIKTOK_PACKAGE_DEFAULT
+                self.app.hook.broadcast_flip_transform_to_tiktok(
+                    tiktok_pkg=pkg,
+                    rotation_deg=int(getattr(e, "rotation", 0)),
+                    flip_x=bool(getattr(e, "mirror_h", False)),
+                    flip_y=bool(getattr(e, "mirror_v", False)),
+                    zoom=float(getattr(e, "zoom", 1.0) or 1.0),
+                    bypass_facing=getattr(e, "bypass_facing", "back"),
+                    serial=self.app.adb_id_for(e),
+                )
+            except Exception:
+                log.exception("broadcast zoom change failed")
+
+        threading.Thread(target=_poke_zoom, daemon=True).start()
+
+    def _on_zoom_reset(self) -> None:
+        self.zoom_var.set(1.0)
+        self._on_zoom_change()
 
     def _on_encode_push(self) -> None:
         """Kick off encode + push for the *currently-selected* device.

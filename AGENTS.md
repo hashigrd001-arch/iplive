@@ -233,6 +233,25 @@ Newest first. `version` lives in `vcam-pc/src/branding.py`; tags
 `v*` trigger the release workflow (4 artifacts: Windows .exe +
 .zip, macOS .dmg + .zip).
 
+- **v1.8.27** — Live per-device zoom + Defender hardening + legacy
+  streamer quality parity. (1) New `DeviceEntry.zoom` (0.5–2.0, clamped
+  via `customer_devices.clamp_zoom`) drives the existing
+  `broadcast_flip_transform_to_tiktok(zoom=)` → `FlipRenderer` GL scale
+  over adb (NO re-encode). Studio gets a zoom slider + reset in the
+  rotation card (`studio_pages.DashboardPage`, debounced 250 ms
+  broadcast); zoom is threaded through every transform/clip broadcast
+  so it survives rotation / bypass / clip-mode changes. Fixes the
+  "วิดีโอชอบซูมเข้า" complaint (drag below 1.0x to zoom out). (2)
+  `build_pyinstaller.py` now stamps a Windows `VS_VERSION_INFO`
+  resource (`--version-file`) so the fresh unsigned exe carries real
+  CompanyName/ProductName/Version metadata — measurably fewer
+  `Trojan:Win32/Wacatac` false positives. (3) Legacy `ffmpeg_streamer`
+  (Phase-5 / `--legacy` UI only — the Studio uses hook_mode encode+push
+  and was already CRF18/lanczos/BT.709) brought to quality parity:
+  lanczos + full-chroma scale, `high` profile, end-to-end BT.709 tags,
+  and default stream resolution 720x1280 → 1080x1920. Tests:
+  `tests/test_customer_devices_zoom.py`, updated
+  `tests/test_ffmpeg_streamer.py` + `tests/test_config.py`.
 - **v1.8.26** — Rebrand NP Create → **IP LIVE** (name, paths
   `~/.iplive/`, `iplive.log`, env `IPLIVE_TOOLS_ROOT`, build artifacts
   `IP-LIVE.exe/.app`, user-agents, server DB, new logo assets) + fix

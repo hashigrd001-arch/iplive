@@ -87,7 +87,13 @@ class StreamConfig:
     ffmpeg_path: str = "ffmpeg"
     adb_path: str = "adb"
     tcp_port: int = 8888
-    resolution: str = "720x1280"
+    # Phase-5 (screen-share / legacy diagnostic UI) stream resolution.
+    # Bumped 720x1280 -> 1080x1920 in v1.8.27: every min-SDK-33 phone
+    # decodes 1080p H.264 High profile fine, and the old 720p looked
+    # soft once mirrored full-screen. The Studio encode+push path uses
+    # encode_width/encode_height (match-source) instead and is
+    # unaffected by this field.
+    resolution: str = "1080x1920"
     fps: int = 30
     # Hook-mode MP4 output dimensions (landscape). The phone's
     # rotation chain turns this back into a portrait clip on screen.

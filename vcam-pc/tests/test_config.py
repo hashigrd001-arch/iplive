@@ -14,10 +14,10 @@ def test_stream_config_defaults() -> None:
     cfg = StreamConfig()
     assert cfg.tcp_port == 8888
     assert cfg.fps == 30
-    # Portrait 720×1280 — TikTok Live is vertical-first, so the
-    # default resolution flipped from landscape early in v1.0.
-    assert cfg.width == 720
-    assert cfg.height == 1280
+    # Portrait 1080×1920 — TikTok Live is vertical-first. Bumped from
+    # 720×1280 to 1080p in v1.8.27 (every min-SDK-33 phone decodes it).
+    assert cfg.width == 1080
+    assert cfg.height == 1920
     assert cfg.loop_playlist is True
 
 

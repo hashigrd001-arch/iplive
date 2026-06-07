@@ -37,6 +37,31 @@ log = logging.getLogger(__name__)
 
 LIBRARY_PATH = Path.home() / ".iplive" / "devices.json"
 
+# Live zoom bounds for the FlipRenderer GL transform. The phone hook
+# multiplies the output quad by this factor (``Matrix.scaleM``), so
+# < 1.0 shrinks the clip (zoom OUT — fixes the "ภาพถูกซูมเข้าจนเกิน"
+# complaint) and > 1.0 crops in. We clamp at the PC so a corrupt
+# devices.json or a runaway slider can never push the renderer to a
+# degenerate scale that blanks the camera surface.
+ZOOM_MIN = 0.5
+ZOOM_MAX = 2.0
+ZOOM_DEFAULT = 1.0
+
+
+def clamp_zoom(value: object) -> float:
+    """Coerce ``value`` to a float in ``[ZOOM_MIN, ZOOM_MAX]``.
+
+    Falls back to ``ZOOM_DEFAULT`` for ``None`` / non-numeric input so
+    a malformed persisted value never crashes device-library load.
+    """
+    try:
+        z = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return ZOOM_DEFAULT
+    if z != z:  # NaN guard
+        return ZOOM_DEFAULT
+    return max(ZOOM_MIN, min(ZOOM_MAX, z))
+
 
 @dataclass
 class DeviceEntry:
@@ -48,6 +73,7 @@ class DeviceEntry:
     rotation: int = 0              # 0 / 90 / 180 / 270
     mirror_h: bool = False
     mirror_v: bool = False
+    zoom: float = ZOOM_DEFAULT      # live GL zoom (0.5–2.0); 1.0 = none
     patched_at: str = ""           # iso timestamp; empty = never
     added_at: str = ""             # iso timestamp; set on first sight
     # ── WiFi / wireless-ADB state ───────────────────────────────
@@ -249,6 +275,7 @@ class DeviceLibrary:
                     rotation=int(raw.get("rotation", 0)) % 360,
                     mirror_h=bool(raw.get("mirror_h", False)),
                     mirror_v=bool(raw.get("mirror_v", False)),
+                    zoom=clamp_zoom(raw.get("zoom", ZOOM_DEFAULT)),
                     patched_at=str(raw.get("patched_at", "")),
                     added_at=str(raw.get("added_at", "")),
                     wifi_ip=str(raw.get("wifi_ip", "")),
@@ -414,6 +441,7 @@ class DeviceLibrary:
         rotation: int | None = None,
         mirror_h: bool | None = None,
         mirror_v: bool | None = None,
+        zoom: float | None = None,
     ) -> None:
         with self._lock:
             e = self.entries.get(serial)
@@ -425,6 +453,8 @@ class DeviceLibrary:
                 e.mirror_h = bool(mirror_h)
             if mirror_v is not None:
                 e.mirror_v = bool(mirror_v)
+            if zoom is not None:
+                e.zoom = clamp_zoom(zoom)
 
     def update_bypass_facing(self, serial: str, bypass_facing: str) -> None:
         """Persist which camera lens receives the hook replacement.

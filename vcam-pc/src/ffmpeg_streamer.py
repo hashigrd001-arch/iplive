@@ -50,16 +50,32 @@ class FFmpegStreamer:
             log.warning("ffmpeg not found on PATH — set ffmpeg_path in config.json")
 
         # video filter chain
+        #
+        # Quality parity with hook_mode (v1.8.27): Lanczos resampling +
+        # full-precision chroma and explicit BT.709 matrix/range. The
+        # old ``flags=bicubic`` (no color tags) reproduced the
+        # "ผิวเหลืองซีด" skin-tone shift on ColorOS/MIUI here exactly
+        # like the pre-v1.8.19 hook path, because un-tagged 1080p gets
+        # decoded as BT.601 on those OEMs. ``force_original_aspect_ratio
+        # =decrease`` keeps the source aspect (no stretch) and the pad
+        # centres it.
         vf: list[str] = []
         if profile.rotation_filter and profile.rotation_filter != "none":
             vf.append(profile.rotation_filter)
-        vf.append(f"scale={self.cfg.width}:{self.cfg.height}:flags=bicubic")
+        vf.append(
+            f"scale={self.cfg.width}:{self.cfg.height}:"
+            "force_original_aspect_ratio=decrease:"
+            "flags=lanczos+full_chroma_int+full_chroma_inp:"
+            "in_color_matrix=auto:out_color_matrix=bt709:"
+            "in_range=auto:out_range=tv"
+        )
         vf.append(f"fps={self.cfg.fps}")
         # Pad/letterbox to keep aspect ratio safely.
         vf.append(
             f"pad={self.cfg.width}:{self.cfg.height}:"
             f"(ow-iw)/2:(oh-ih)/2:color=black"
         )
+        vf.append("setsar=1")
 
         keyint = max(1, int(self.cfg.fps * self.cfg.keyint_seconds))
 
@@ -81,11 +97,19 @@ class FFmpegStreamer:
             "-an",
             "-vf", ",".join(vf),
             # H.264 encode tuned for low-latency streaming.
+            #
+            # v1.8.27: baseline -> high profile. ``-tune zerolatency``
+            # already forces bframes=0, so High here only adds CABAC
+            # (better entropy coding, sharper at the same bitrate)
+            # without re-introducing decode latency. Level bumped to
+            # 4.2 to comfortably cover 1080p; every min-SDK-33 decoder
+            # supports it. BT.709 tags added end-to-end (container +
+            # H.264 VUI) so the phone never guesses BT.601.
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-tune", "zerolatency",
-            "-profile:v", "baseline",
-            "-level", "4.0",
+            "-profile:v", "high",
+            "-level", "4.2",
             "-pix_fmt", "yuv420p",
             "-r", str(self.cfg.fps),
             "-g", str(keyint),
@@ -94,6 +118,14 @@ class FFmpegStreamer:
             "-b:v", self.cfg.video_bitrate,
             "-maxrate", self.cfg.video_maxrate,
             "-bufsize", self.cfg.video_bufsize,
+            # Color metadata so MediaCodec decodes in BT.709 limited
+            # range (matches the scaler's out_color_matrix above).
+            "-color_range", "tv",
+            "-colorspace", "bt709",
+            "-color_primaries", "bt709",
+            "-color_trc", "bt709",
+            "-x264-params",
+            "colormatrix=bt709:colorprim=bt709:transfer=bt709",
             # Output: Annex-B H.264 to stdout.
             "-f", "h264",
             "pipe:1",

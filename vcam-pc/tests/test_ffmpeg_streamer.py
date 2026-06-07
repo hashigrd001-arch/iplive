@@ -36,29 +36,44 @@ def test_audio_is_dropped() -> None:
     assert "-an" in cmd
 
 
-def test_h264_baseline_for_compatibility() -> None:
+def test_h264_high_profile_with_color_tags() -> None:
+    # v1.8.27: baseline -> high (CABAC) + explicit BT.709 tags.
     cmd = _build()
     i = cmd.index("-profile:v")
-    assert cmd[i + 1] == "baseline"
+    assert cmd[i + 1] == "high"
     assert cmd[cmd.index("-c:v") + 1] == "libx264"
     assert cmd[cmd.index("-pix_fmt") + 1] == "yuv420p"
+    assert cmd[cmd.index("-colorspace") + 1] == "bt709"
+    assert cmd[cmd.index("-color_primaries") + 1] == "bt709"
+    assert cmd[cmd.index("-color_trc") + 1] == "bt709"
+    assert cmd[cmd.index("-color_range") + 1] == "tv"
+    xparams = cmd[cmd.index("-x264-params") + 1]
+    assert "colormatrix=bt709" in xparams
+
+
+def test_scale_uses_lanczos_and_bt709() -> None:
+    cmd = _build()
+    vf = cmd[cmd.index("-vf") + 1]
+    assert "flags=lanczos" in vf
+    assert "out_color_matrix=bt709" in vf
+    assert "setsar=1" in vf
 
 
 def test_rotation_appears_in_filter_chain() -> None:
-    # Default resolution is 720x1280 portrait (TikTok Live).
+    # Default resolution is 1080x1920 portrait (TikTok Live).
     cmd = _build(rotation="transpose=2,vflip")
     vf = cmd[cmd.index("-vf") + 1]
     assert vf.startswith("transpose=2,vflip,")
-    assert "scale=720:1280" in vf
+    assert "scale=1080:1920" in vf
     assert "fps=30" in vf
-    assert "pad=720:1280" in vf
+    assert "pad=1080:1920" in vf
 
 
 def test_rotation_none_omitted_from_filter_chain() -> None:
     cmd = _build(rotation="none")
     vf = cmd[cmd.index("-vf") + 1]
     assert not vf.startswith("transpose")
-    assert "scale=720:1280" in vf
+    assert "scale=1080:1920" in vf
 
 
 def test_keyint_is_fps_times_seconds() -> None:
