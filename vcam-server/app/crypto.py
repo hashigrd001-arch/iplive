@@ -34,6 +34,7 @@ Any change to that grammar breaks every shipped build.
 from __future__ import annotations
 
 import base64
+import os
 import secrets
 from dataclasses import dataclass
 from datetime import date
@@ -68,6 +69,19 @@ def _load_seed() -> bytes:
     with _seed_lock:
         if _cached_seed is not None:
             return _cached_seed
+        env_seed = os.environ.get("SIGNING_KEY_HEX", "").strip()
+        if env_seed:
+            if len(env_seed) != 64:
+                raise CryptoError(
+                    "malformed SIGNING_KEY_HEX (expected 64 hex chars)"
+                )
+            try:
+                seed = bytes.fromhex(env_seed)
+            except ValueError as exc:
+                raise CryptoError("SIGNING_KEY_HEX is not valid hex") from exc
+            _cached_seed = seed
+            _cached_pub = ed.keypair_from_seed(seed)[1]
+            return seed
         path: Path = SETTINGS.signing_key_path
         if not path.is_file():
             raise CryptoError(

@@ -35,8 +35,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     BIND_PORT=8000 \
     COOKIE_SECURE=1
 
-# Non-root runtime user. Distroless would be nicer but bcrypt's
-# python wheel needs libc; the slim image gives us that for ~70 MB.
+# Railway mounts persistent volumes as root-owned paths. Keep the
+# directory present in the image, but run the tiny admin service as the
+# container default user so SQLite/support uploads can write to the
+# mounted volume without a chown entrypoint. For the VPS Docker Compose
+# flow this remains isolated inside the container.
 RUN useradd --create-home --uid 10001 npc \
     && mkdir -p /var/lib/iplive \
     && chown -R npc:npc /var/lib/iplive
@@ -44,19 +47,14 @@ RUN useradd --create-home --uid 10001 npc \
 WORKDIR /app
 COPY --from=builder /venv /venv
 COPY app ./app
-RUN chown -R npc:npc /app
-
-USER npc
 
 EXPOSE 8000
 
-# We don't use ENTRYPOINT because operators sometimes want to shell
-# in and run ``app.cli`` commands; a CMD lets ``docker compose run
-# app python -m app.cli init-keys`` work without --entrypoint
-# overrides.
-CMD ["/venv/bin/uvicorn", "app.main:app", \
-     "--host", "0.0.0.0", "--port", "8000", \
-     "--proxy-headers", "--forwarded-allow-ips", "*"]
+# Railway injects ``PORT`` dynamically; docker compose does not.
+# Use a shell form so ``${PORT:-8000}`` expands at runtime while the
+# existing local/VPS compose flow keeps working unchanged.
+CMD ["/bin/sh", "-c", \
+     "/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips '*'"]
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD /venv/bin/python -c "import urllib.request,sys; \

@@ -35,6 +35,17 @@ function adminApp() {
     // ── licenses ────────────────────────────────────────
     licStatus: '',
     licenses: [],
+    showIssueLicense: false,
+    issuingLicense: false,
+    issueForm: {
+      customer_id: '',
+      customer_name: '',
+      max_devices: 3,
+      days: 30,
+      expiry: '',
+      note: '',
+    },
+    lastIssuedKey: null,
 
     // ── payments ────────────────────────────────────────
     payments: [],
@@ -144,6 +155,69 @@ function adminApp() {
       const s = this.licStatus ? `?status=${encodeURIComponent(this.licStatus)}` : '';
       const rows = await this.api('GET', `/api/admin/licenses${s}`);
       if (rows) this.licenses = rows;
+    },
+    async openIssueLicense(customerId = '') {
+      if (this.customers.length === 0) {
+        await this.loadCustomers();
+      }
+      this.issueForm = {
+        customer_id: customerId || '',
+        customer_name: '',
+        max_devices: 3,
+        days: 30,
+        expiry: '',
+        note: '',
+      };
+      this.showIssueLicense = true;
+    },
+    async issueLicense() {
+      const cid = Number(this.issueForm.customer_id);
+      if (!cid) {
+        alert('เลือกลูกค้าก่อน');
+        return;
+      }
+      const maxDevices = Number(this.issueForm.max_devices || 3);
+      const days = Number(this.issueForm.days || 30);
+      if (maxDevices < 1) {
+        alert('จำนวนมือถือต้องมากกว่า 0');
+        return;
+      }
+      if (!this.issueForm.expiry && days < 1) {
+        alert('จำนวนวันต้องมากกว่า 0 หรือใส่วันหมดอายุ');
+        return;
+      }
+      const payload = {
+        max_devices: maxDevices,
+        days,
+        expiry: this.issueForm.expiry || '',
+        customer_name: (this.issueForm.customer_name || '').trim(),
+        note: (this.issueForm.note || '').trim(),
+      };
+      this.issuingLicense = true;
+      try {
+        const issued = await this.api(
+          'POST',
+          `/api/admin/customers/${cid}/licenses`,
+          payload,
+        );
+        if (!issued) return;
+        this.lastIssuedKey = issued;
+        this.showIssueLicense = false;
+        await this.loadLicenses();
+        await this.loadDashboard();
+      } finally {
+        this.issuingLicense = false;
+      }
+    },
+    async copyIssuedKey() {
+      if (!this.lastIssuedKey) return;
+      const text = this.lastIssuedKey.key;
+      try {
+        await navigator.clipboard.writeText(text);
+        alert('ก๊อป License Key แล้ว');
+      } catch (e) {
+        window.prompt('ก๊อป License Key:', text);
+      }
     },
 
     // ── payments ────────────────────────────────────────

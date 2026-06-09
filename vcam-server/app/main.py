@@ -12,6 +12,7 @@ multi-worker fan-out, and (b) FastAPI works fine on uvicorn alone.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -33,6 +34,44 @@ from .routes import (
 log = logging.getLogger(__name__)
 
 
+def _bootstrap_admin_from_env() -> None:
+    """Create the first admin from env vars when the DB is empty.
+
+    Railway deploys should be repeatable without SSH'ing into the
+    container to run ``python -m app.cli create-admin``. When
+    ``ADMIN_EMAIL`` + ``ADMIN_PASSWORD`` are set, we create that admin
+    only if the email does not already exist. This is intentionally
+    idempotent: restarts and redeploys leave the existing account
+    untouched, while a fresh DB/volume comes up usable immediately.
+    """
+    email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+    password = os.environ.get("ADMIN_PASSWORD", "")
+    if not email or not password:
+        return
+
+    from . import auth
+
+    try:
+        pwd_hash = auth.hash_password(password)
+    except ValueError:
+        log.warning("ADMIN_PASSWORD is too short; skipping admin bootstrap")
+        return
+
+    display = os.environ.get("ADMIN_DISPLAY_NAME", "").strip() or email
+    with db.connect() as cx:
+        existing = cx.execute(
+            "SELECT id FROM admins WHERE email = ?", (email,),
+        ).fetchone()
+        if existing:
+            return
+        cur = cx.execute(
+            "INSERT INTO admins (email, password_hash, display_name, "
+            "created_at, is_active) VALUES (?, ?, ?, ?, 1)",
+            (email, pwd_hash, display, db.now_iso()),
+        )
+    log.info("bootstrapped admin id=%s email=%s", cur.lastrowid, email)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     """Initialise DB on startup. Idempotent — safe to call every
@@ -46,6 +85,7 @@ async def _lifespan(app: FastAPI):
     log.info("Upload = %s", SETTINGS.upload_dir)
     log.info("Cookie secure = %s", SETTINGS.cookie_secure)
     db.init_db()
+    _bootstrap_admin_from_env()
     yield
 
 
