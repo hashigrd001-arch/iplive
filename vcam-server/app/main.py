@@ -26,6 +26,7 @@ from .routes import (
     admin_licenses,
     admin_payments,
     admin_support,
+    admin_users,
     public_activate,
     public_support,
     ui,
@@ -122,6 +123,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_licenses.router)
     app.include_router(admin_payments.router)
     app.include_router(admin_support.router)
+    app.include_router(admin_users.router)
 
     # ── customer public APIs (no auth, signed payloads) ──
     app.include_router(public_activate.router)

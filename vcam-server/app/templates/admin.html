@@ -314,6 +314,54 @@
       </div>
     </section>
 
+    <!-- ADMINS -->
+    <section x-show="page === 'admins'" x-cloak>
+      <div class="flex items-center justify-between mb-1">
+        <div>
+          <h1 class="text-2xl font-bold">แอดมิน</h1>
+          <p class="text-sm text-slate-500">เพิ่มผู้ใช้หลังบ้านสำหรับออก License Key</p>
+        </div>
+        <button @click="showNewAdmin = true"
+                class="px-3 py-1.5 rounded-md bg-brand text-white text-sm font-semibold">
+          + เพิ่มแอดมิน
+        </button>
+      </div>
+
+      <div class="bg-white rounded-lg border border-slate-200 overflow-hidden mt-4">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-xs text-slate-500">
+            <tr>
+              <th class="text-left px-4 py-2">อีเมล</th>
+              <th class="text-left">ชื่อ</th>
+              <th class="text-left">สร้างเมื่อ</th>
+              <th class="text-left">ล็อกอินล่าสุด</th>
+              <th class="text-left">สถานะ</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="a in admins" :key="a.id">
+              <tr class="border-t border-slate-100 hover:bg-slate-50">
+                <td class="px-4 py-2 font-medium" x-text="a.email"></td>
+                <td x-text="a.display_name || '—'"></td>
+                <td x-text="a.created_at ? a.created_at.slice(0, 16).replace('T',' ') : '—'"></td>
+                <td x-text="a.last_login_at ? a.last_login_at.slice(0, 16).replace('T',' ') : '—'"></td>
+                <td>
+                  <span class="text-xs px-2 py-0.5 rounded"
+                        :class="a.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'"
+                        x-text="a.is_active ? 'active' : 'inactive'"></span>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="admins.length === 0">
+              <td colspan="5" class="px-4 py-8 text-center text-slate-400">
+                ยังไม่มีแอดมิน
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
   </main>
 
   <!-- ── new-customer modal ── -->
@@ -350,6 +398,50 @@
                 class="px-3 py-1.5 rounded-md border border-slate-300 text-sm">ยกเลิก</button>
         <button @click="createCustomer()"
                 class="px-3 py-1.5 rounded-md bg-brand text-white text-sm font-semibold">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── new-admin modal ── -->
+  <div x-show="showNewAdmin" x-cloak
+       class="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+      <h2 class="text-lg font-bold mb-1">เพิ่มแอดมิน</h2>
+      <p class="text-xs text-slate-500 mb-4">
+        แอดมินที่เพิ่มจะล็อกอินเข้าเว็บหลังบ้านเพื่อเพิ่มลูกค้าและออก License Key ได้
+      </p>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">อีเมล *</label>
+          <input type="email" x-model="newAdmin.email"
+                 placeholder="admin2@example.com"
+                 class="w-full px-3 py-2 rounded-md border border-slate-300 focus:border-brand focus:ring-1 focus:ring-red-200 outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">ชื่อแสดงผล</label>
+          <input type="text" x-model="newAdmin.display_name"
+                 placeholder="ชื่อแอดมิน"
+                 class="w-full px-3 py-2 rounded-md border border-slate-300 outline-none">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-600 mb-1">รหัสผ่าน *</label>
+          <input type="text" x-model="newAdmin.password"
+                 placeholder="อย่างน้อย 6 ตัวอักษร"
+                 class="w-full px-3 py-2 rounded-md border border-slate-300 outline-none">
+          <div class="text-[11px] text-slate-400 mt-1">
+            สร้างรหัสผ่านแรง ๆ แล้วส่งให้แอดมินผ่านช่องทางส่วนตัว
+          </div>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button @click="showNewAdmin = false"
+                class="px-3 py-1.5 rounded-md border border-slate-300 text-sm">ยกเลิก</button>
+        <button @click="createAdmin()"
+                :disabled="creatingAdmin"
+                class="px-3 py-1.5 rounded-md bg-brand text-white text-sm font-semibold disabled:opacity-50">
+          <span x-show="!creatingAdmin">สร้างแอดมิน</span>
+          <span x-show="creatingAdmin">กำลังสร้าง...</span>
+        </button>
       </div>
     </div>
   </div>

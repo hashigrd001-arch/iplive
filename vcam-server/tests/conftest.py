@@ -62,6 +62,7 @@ def client(tmp_path, monkeypatch) -> Iterator:
         "app.routes.admin_licenses",
         "app.routes.admin_payments",
         "app.routes.admin_support",
+        "app.routes.admin_users",
         "app.routes.public_activate",
         "app.routes.public_support",
         "app.routes.ui",

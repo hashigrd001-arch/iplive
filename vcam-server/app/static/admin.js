@@ -15,6 +15,7 @@ function adminApp() {
       { id: 'licenses',  label: 'License Keys',    icon: '🔑' },
       { id: 'payments',  label: 'การชำระเงิน',     icon: '💳' },
       { id: 'support',   label: 'Support Inbox',   icon: '🛟' },
+      { id: 'admins',    label: 'แอดมิน',          icon: '👥' },
     ],
 
     // ── dashboard state ────────────────────────────────
@@ -53,6 +54,12 @@ function adminApp() {
     // ── support ─────────────────────────────────────────
     tickets: [],
 
+    // ── admins ──────────────────────────────────────────
+    admins: [],
+    showNewAdmin: false,
+    creatingAdmin: false,
+    newAdmin: { email: '', password: '', display_name: '' },
+
     // ── lifecycle ───────────────────────────────────────
     init() {
       this.loadDashboard();
@@ -65,6 +72,7 @@ function adminApp() {
         if (p === 'licenses')  this.loadLicenses();
         if (p === 'payments')  this.loadPayments();
         if (p === 'support')   this.loadTickets();
+        if (p === 'admins')    this.loadAdmins();
       });
     },
 
@@ -230,6 +238,39 @@ function adminApp() {
     async loadTickets() {
       const rows = await this.api('GET', '/api/admin/support');
       if (rows) this.tickets = rows;
+    },
+
+    // ── admins ──────────────────────────────────────────
+    async loadAdmins() {
+      const rows = await this.api('GET', '/api/admin/admins');
+      if (rows) this.admins = rows;
+    },
+    async createAdmin() {
+      const email = (this.newAdmin.email || '').trim();
+      const password = this.newAdmin.password || '';
+      if (!email) {
+        alert('ใส่อีเมลแอดมินก่อน');
+        return;
+      }
+      if (password.length < 6) {
+        alert('รหัสผ่านต้องอย่างน้อย 6 ตัวอักษร');
+        return;
+      }
+      this.creatingAdmin = true;
+      try {
+        const created = await this.api('POST', '/api/admin/admins', {
+          email,
+          password,
+          display_name: (this.newAdmin.display_name || '').trim(),
+        });
+        if (!created) return;
+        this.showNewAdmin = false;
+        this.newAdmin = { email: '', password: '', display_name: '' };
+        await this.loadAdmins();
+        alert('เพิ่มแอดมินเรียบร้อย');
+      } finally {
+        this.creatingAdmin = false;
+      }
     },
   };
 }
