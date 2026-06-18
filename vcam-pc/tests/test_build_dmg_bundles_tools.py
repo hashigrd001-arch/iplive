@@ -68,11 +68,22 @@ def test_fails_hard_when_toolchain_missing(script_text: str):
     assert "exit 1" in guard
 
 
-def test_verifies_adb_is_executable_after_copy(script_text: str):
-    """adb must be present + executable in the bundle or the build
-    aborts — catches a copy that dropped the exec bit."""
+def test_restores_exec_bits_and_verifies_adb_present(script_text: str):
+    """Python zip extraction (setup_ci_tools) drops POSIX exec bits, so
+    the build must chmod the binaries (not abort) and then confirm adb
+    is actually present in the bundle.
+
+    Regression: the first cut aborted on ``[[ ! -x "$ADB_BIN" ]]`` and
+    that's exactly what failed the v1.8.29 macOS build at 'Build .dmg'.
+    """
     assert 'ADB_BIN="$DEST_TOOLS/platform-tools/adb"' in script_text
-    assert 'if [[ ! -x "$ADB_BIN" ]]; then' in script_text
+    # Presence check (not an executable-bit check that would falsely
+    # abort on a freshly-extracted toolchain).
+    assert 'if [[ ! -f "$ADB_BIN" ]]; then' in script_text
+    # Must repair the exec bit rather than bail.
+    assert "chmod +x" in script_text
+    # The old self-aborting guard must be gone.
+    assert 'if [[ ! -x "$ADB_BIN" ]]; then' not in script_text
 
 
 def test_bundles_vcam_apk(script_text: str):

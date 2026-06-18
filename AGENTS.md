@@ -233,6 +233,22 @@ Newest first. `version` lives in `vcam-pc/src/branding.py`; tags
 `v*` trigger the release workflow (4 artifacts: Windows .exe +
 .zip, macOS .dmg + .zip).
 
+- **v1.8.30** — Fix the v1.8.29 **macOS release build failure** (job
+  `build-macos` died at step "Build .dmg", so no `.dmg`/`.zip` ever
+  published — only the Windows artifacts shipped). Root cause:
+  `setup_ci_tools._extract_zip` writes files with `shutil.copyfileobj`
+  and never restores POSIX mode (unlike `_extract_tar`, which `chmod
+  ... | 0o755`), so the platform-tools `adb` landed **without its
+  execute bit** on the CI runner. `build_dmg.sh`'s new sanity guard
+  `[[ ! -x "$ADB_BIN" ]]` then `exit 1`'d the build. Two-part fix:
+  (1) `_extract_zip` now mirrors `_extract_tar` and `chmod`s extracted
+  files executable — this also fixes the portable macOS `.zip` shipping
+  a non-runnable adb; (2) `build_dmg.sh` `chmod +x`'s the bundled
+  binaries (adb/ffmpeg/scrcpy/mediamtx + every `*/bin/*` + jspawnhelper)
+  and the guard now only aborts when adb is genuinely *missing*
+  (`[[ ! -f ]]`), not merely non-executable. Tests:
+  `tests/test_build_dmg_bundles_tools.py`
+  (`test_restores_exec_bits_and_verifies_adb_present`).
 - **v1.8.29** — Fix "วีดีโออัพได้สูงสุดแค่ 5 นาที" (encode falsely
   capped at 5 min). The hook-encode stall watchdog
   (`hook_mode._run_ffmpeg_with_progress`) reset its no-progress timer

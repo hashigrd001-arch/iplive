@@ -268,6 +268,17 @@ def _extract_zip(zpath: Path, into: Path, strip_first: bool = False) -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(member) as src, target.open("wb") as dst:
                 shutil.copyfileobj(src, dst)
+            # Python's zipfile does NOT preserve POSIX mode, so every
+            # file lands without its execute bit. On macOS that left the
+            # platform-tools ``adb`` non-executable — find_adb() then saw
+            # it as missing and the wizard hung on "รอเครื่อง...", and the
+            # .dmg build's adb sanity check aborted ("Build .dmg" failure,
+            # v1.8.29). Mirror ``_extract_tar``'s ``| 0o755`` so extracted
+            # binaries are runnable; harmless for data files / on Windows.
+            try:
+                target.chmod(target.stat().st_mode | 0o755)
+            except OSError:
+                pass
 
 
 def _extract_tar(tpath: Path, into: Path, strip_first: bool = False) -> None:

@@ -121,13 +121,32 @@ mkdir -p "$DEST_TOOLS"
 # and resource metadata. ``cp -R`` can mangle these on macOS.
 ditto "$TOOLS_SRC" "$DEST_TOOLS"
 
+# Restore exec bits. ``setup_ci_tools.py`` extracts the toolchain with
+# Python's ``zipfile``, which does NOT preserve POSIX mode — so adb /
+# java / ffmpeg routinely land WITHOUT the execute bit. ``ditto`` then
+# faithfully copies that broken (non-executable) bit into the bundle.
+# This is the very condition the v1.8.28/29 runtime self-heal exists to
+# paper over; here we fix it at build time so the shipped .app just
+# works. (The first cut of this script *aborted* when adb wasn't
+# executable, which is why the v1.8.29 macOS build failed at "Build
+# .dmg" — we now chmod instead of bailing.)
+find "$DEST_TOOLS" -type f \( \
+    -name adb -o -name fastboot -o -name ffmpeg -o -name ffprobe \
+    -o -name scrcpy -o -name mediamtx \) \
+    -exec chmod +x {} + 2>/dev/null || true
+# JDK ships dozens of helper binaries under */bin/ plus lib/jspawnhelper;
+# java won't launch without them executable.
+find "$DEST_TOOLS" -type f -path '*/bin/*' -exec chmod +x {} + 2>/dev/null || true
+find "$DEST_TOOLS" -type f -name jspawnhelper -exec chmod +x {} + 2>/dev/null || true
+
 ADB_BIN="$DEST_TOOLS/platform-tools/adb"
-if [[ ! -x "$ADB_BIN" ]]; then
-    echo "[!] adb missing or not executable after copy:"
+if [[ ! -f "$ADB_BIN" ]]; then
+    echo "[!] adb not found after copy:"
     echo "    $ADB_BIN"
     echo "    The .dmg would still hang the wizard — aborting."
     exit 1
 fi
+chmod +x "$ADB_BIN" 2>/dev/null || true
 
 # Bundle the vcam-app APK (LSPatch / Patch path). Same candidate order
 # as platform_tools.find_vcam_apk(). Optional: Phase 5 screen-share
