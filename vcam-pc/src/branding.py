@@ -37,7 +37,7 @@ class Brand:
     company_th: str = "IP LIVE"
     company_en: str = "IP LIVE"
 
-    version: str = "1.8.27"
+    version: str = "1.8.29"
 
     tagline_th: str = "ระบบไลฟ์มือโปร — เสถียร ใช้ง่าย"
     tagline_en: str = "Live Streaming Studio"

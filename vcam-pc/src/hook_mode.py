@@ -1099,6 +1099,22 @@ class HookModePipeline:
                 line = line.strip()
                 if not line:
                     continue
+                # Liveness, not just forward time, resets the stall
+                # watchdog (v1.8.29 — "วีดีโออัพได้สูงสุดแค่ 5 นาที" bug).
+                # With ``-progress pipe:1 -nostats`` ffmpeg writes ONLY
+                # progress key=value blocks to stdout, so ANY fresh line
+                # — even ``frame=`` / ``total_size=`` / ``out_time=N/A``
+                # that we can't turn into an encoded position — proves
+                # the encoder is still working. Keying the watchdog
+                # solely off a *forward out_time* meant builds whose
+                # time key we couldn't parse (or that emit ``out_time=
+                # N/A`` for a stretch on audio-heavy / VFR sources) were
+                # false-killed at exactly ``encode_stall_timeout_s``
+                # (300 s = 5 min) with "ffmpeg ค้าง ... เกิน 5 นาที",
+                # which customers read as a hard 5-minute upload cap.
+                # Now only a genuinely silent ffmpeg (no stdout at all)
+                # trips the watchdog, so clip length is never the limit.
+                progress_ts["t"] = time.monotonic()
                 # Pull the encoded-output position out of whatever
                 # time key this ffmpeg build emits (out_time_us /
                 # out_time). Older / minimal static builds emit only
@@ -1107,10 +1123,10 @@ class HookModePipeline:
                 # with a dead 0 % bar ("% ไม่ขึ้น").
                 us = self._extract_out_time_us(line)
                 if us is not None:
-                    # Any forward movement resets the stall watchdog.
+                    # Track forward movement for the % bar (the stall
+                    # watchdog is already reset above on every line).
                     if us > last_us:
                         last_us = us
-                        progress_ts["t"] = time.monotonic()
                     encoded_s = us / 1_000_000.0
                     if duration_s > 0:
                         pct = max(0.0, min(1.0, encoded_s / duration_s))

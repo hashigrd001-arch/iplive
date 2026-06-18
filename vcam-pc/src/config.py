@@ -199,13 +199,19 @@ class StreamConfig:
     encode_match_source: bool = True
 
     keyint_seconds: int = 2
-    # Seconds with NO ffmpeg encode progress before we treat the
-    # encoder as hung and kill it (v1.8.26). This replaced the old
-    # total-wall-clock cap, which killed long clips (>~10 min) when
-    # the duration probe returned 0 and the timeout collapsed to its
-    # 600 s floor. A long clip that keeps encoding is never killed;
-    # only a genuinely stalled ffmpeg is. Raise on slow disks/CPUs.
-    encode_stall_timeout_s: int = 300
+    # Seconds with NO ffmpeg *stdout* output before we treat the
+    # encoder as hung and kill it (v1.8.26 stall watchdog; v1.8.29
+    # liveness fix). Originally this replaced a total-wall-clock cap
+    # that killed long clips (>~10 min). v1.8.29 then fixed the
+    # "วีดีโออัพได้สูงสุดแค่ 5 นาที" report: the watchdog used to reset
+    # only on a *forward out_time*, so builds whose time key we
+    # couldn't parse (or that emit out_time=N/A for a stretch) were
+    # false-killed at exactly this value (300 s = 5 min) even though
+    # the encode was progressing. The reader now resets the watchdog
+    # on ANY progress line, so only a truly silent ffmpeg trips it.
+    # Bumped 300 → 600 for extra headroom on slow disks/CPUs; clip
+    # length is never the limiting factor regardless of this value.
+    encode_stall_timeout_s: int = 600
     loop_playlist: bool = True
     auto_adb_reverse: bool = True
     videos_dir: str = "videos"

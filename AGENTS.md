@@ -233,6 +233,45 @@ Newest first. `version` lives in `vcam-pc/src/branding.py`; tags
 `v*` trigger the release workflow (4 artifacts: Windows .exe +
 .zip, macOS .dmg + .zip).
 
+- **v1.8.29** — Fix "วีดีโออัพได้สูงสุดแค่ 5 นาที" (encode falsely
+  capped at 5 min). The hook-encode stall watchdog
+  (`hook_mode._run_ffmpeg_with_progress`) reset its no-progress timer
+  ONLY when `_extract_out_time_us` returned a *forward* position. On
+  ffmpeg builds whose `-progress` time key we couldn't parse, or that
+  emit `out_time=N/A` for a stretch (audio-heavy / VFR sources), the
+  timer never advanced even though ffmpeg was plainly alive — so the
+  encode was killed at exactly `encode_stall_timeout_s` (300 s = 5 min)
+  with "ffmpeg ค้าง ... เกิน 5 นาที", which customers read as a hard
+  5-minute upload limit. Since `-progress pipe:1 -nostats` writes ONLY
+  progress blocks to stdout, ANY fresh line proves liveness: the reader
+  now resets the watchdog on every stdout line, so only a genuinely
+  silent ffmpeg trips it and clip length is never the limit. Default
+  `encode_stall_timeout_s` bumped 300 → 600 for extra headroom. Tests:
+  `tests/test_hook_progress.py::test_alive_but_unparsable_progress_not_killed`.
+- **v1.8.28** — macOS `.dmg` shipped with NO toolchain (root-cause
+  fix for "ทุกเครื่อง Mac ค้างที่ รอเครื่อง..."). PyInstaller
+  deliberately omits `.tools/` (`build_pyinstaller.py._add_data_args`);
+  the per-OS installer is supposed to place adb/ffmpeg/JDK 21/lspatch
+  next to the binary. Windows' `installer.iss` did — but
+  `build_dmg.sh` packaged *only* `IP-LIVE.app`, so the `.dmg` (~28 MB
+  vs the portable `.zip`'s ~316 MB) contained no adb at all.
+  `platform_tools.find_adb()` returned None → `AdbController` fell
+  back to bare `"adb"` (not on a customer's PATH) → `is_available()`
+  failed → the "เพิ่มเครื่อง" wizard hung forever, and the
+  `_check_adb_or_warn` dialog's "พบ adb แต่รันไม่ได้" wording was
+  misleading (there was no file to run). `build_dmg.sh` now `ditto`s
+  `.tools/macos/` + the vcam-app APK into a **staging copy** of
+  `Contents/MacOS/` (where frozen-mode `config.PROJECT_ROOT` anchors
+  the resolver), verifies adb is present + executable, strips
+  quarantine, and **fails the build** if the toolchain is missing
+  (so a toolless `.dmg` can never ship again). Staging keeps the
+  PyInstaller artifact pristine so `build_release.py`'s `.zip` doesn't
+  double-bundle `.tools/`. Belt-and-suspenders: `AdbController.__init__`
+  also self-heals a quarantined / non-executable bundled adb via
+  `adb._self_heal_bundled_adb()` (POSIX `chmod +x` + `xattr -dr
+  com.apple.quarantine`, best-effort, no-op on Windows / system adb).
+  Tests: `tests/test_build_dmg_bundles_tools.py`,
+  `tests/test_adb_self_heal.py`.
 - **v1.8.27** — Live per-device zoom + Defender hardening + legacy
   streamer quality parity. (1) New `DeviceEntry.zoom` (0.5–2.0, clamped
   via `customer_devices.clamp_zoom`) drives the existing

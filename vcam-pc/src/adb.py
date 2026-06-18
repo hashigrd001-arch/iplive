@@ -9,13 +9,91 @@ Only the bits we need:
 from __future__ import annotations
 
 import logging
+import os
 import shutil
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+
+def _self_heal_bundled_adb(adb_path: str) -> None:
+    """Make the bundled ``adb`` runnable on macOS / Linux, best-effort.
+
+    Why this exists (customer bug)
+    ------------------------------
+    Customers who download the macOS ZIP via Safari and extract it in
+    ``~/Downloads`` get two things that stop the bundled ``adb`` from
+    ever running, so the "เพิ่มเครื่อง" wizard hangs forever on
+    "รอเครื่อง...":
+
+    1. **No execute bit.** ZIP extraction via Archive Utility / unzip
+       can drop the POSIX exec permission, so ``os.access(adb, X_OK)``
+       is False. ``shutil.which()`` (which :meth:`is_available` relies
+       on) then reports the binary as missing even though it's right
+       there on disk.
+    2. **``com.apple.quarantine`` xattr.** Gatekeeper refuses to spawn
+       a quarantined binary on first launch, so ``adb version`` fails.
+
+    Pre-v1.8.27 the only remedy was a Thai dialog telling the customer
+    to open Terminal and type ``chmod +x`` + click "Allow Anyway".
+    Non-technical Thai sellers don't do that — they message support.
+    This heals both conditions silently the moment we resolve the
+    bundled path, so the dialog only fires for the genuinely-broken
+    case (wrong arch, AV deleted the file, …).
+
+    No-op on Windows (MOTW is handled elsewhere) and on system-PATH
+    adb the customer installed themselves (we never chmod / xattr a
+    file we don't own). Never raises: a failure here just means the
+    customer falls back to the existing manual-fix dialog.
+    """
+    if sys.platform.startswith("win"):
+        return
+    try:
+        path = Path(adb_path)
+    except Exception:  # noqa: BLE001
+        return
+    if not path.is_absolute() or not path.is_file():
+        # Bare "adb" / system PATH binary — not ours to touch.
+        return
+
+    try:
+        if not os.access(path, os.X_OK):
+            mode = path.stat().st_mode
+            path.chmod(
+                mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+            )
+            log.info("added execute bit to bundled adb: %s", path)
+    except OSError as exc:  # noqa: BLE001
+        log.debug("chmod +x on adb failed: %s", exc)
+
+    if sys.platform != "darwin":
+        return
+    xattr = shutil.which("xattr")
+    if xattr is None:
+        log.debug("xattr not on PATH; skipping adb quarantine strip")
+        return
+    # Strip the quarantine xattr from the whole platform-tools dir so
+    # any sibling files (e.g. scrcpy's bundled adb deps) are covered
+    # too, not just the adb binary itself.
+    target = path.parent if path.parent.is_dir() else path
+    try:
+        r = subprocess.run(
+            [xattr, "-dr", "com.apple.quarantine", str(target)],
+            capture_output=True, text=True, timeout=10, check=False,
+        )
+        if r.returncode == 0:
+            log.info("stripped com.apple.quarantine from %s", target)
+        else:
+            log.debug(
+                "xattr on adb exit=%s stderr=%s",
+                r.returncode, (r.stderr or "").strip(),
+            )
+    except (subprocess.TimeoutExpired, OSError) as exc:  # noqa: BLE001
+        log.debug("xattr on adb failed: %s", exc)
 
 
 @dataclass
@@ -45,6 +123,11 @@ class AdbController:
 
     def __init__(self, adb_path: str = "adb") -> None:
         self.adb_path = self._resolve(adb_path)
+        # Heal a quarantined / non-executable bundled adb *before*
+        # anything calls is_available(), otherwise shutil.which()
+        # reports the binary as missing and the wizard hangs on
+        # "รอเครื่อง..." (see _self_heal_bundled_adb docstring).
+        _self_heal_bundled_adb(self.adb_path)
         self.last_restart_error = ""
 
     @staticmethod

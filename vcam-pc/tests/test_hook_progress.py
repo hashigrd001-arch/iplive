@@ -100,6 +100,47 @@ class _StallProc:
         self._killed.set()
 
 
+class _SlowUnparsableProc:
+    """A fake ffmpeg that is plainly ALIVE -- it keeps emitting
+    ``-progress`` lines on a real time cadence -- but whose lines we
+    can NEVER turn into an encoded position (only ``frame=`` and
+    ``out_time=N/A``).
+
+    Pre-v1.8.29 the stall watchdog reset only on a *forward out_time*,
+    so a build that emitted ``out_time=N/A`` for a stretch (audio-heavy
+    / VFR sources) was false-killed at exactly ``encode_stall_timeout_s``
+    (300 s = 5 min) even though ffmpeg was clearly working. Customers
+    read that as a hard "5-minute upload limit". This proc reproduces
+    that liveness-without-parseable-time condition on a compressed time
+    scale so the regression can't come back.
+    """
+
+    def __init__(self, n_lines: int, gap_s: float, returncode: int = 0) -> None:
+        self._n = n_lines
+        self._gap = gap_s
+        self._killed = threading.Event()
+        self.stderr = io.StringIO("")
+        self.returncode = returncode
+        self.stdout = self._gen()
+
+    def _gen(self):
+        for i in range(self._n):
+            if self._killed.is_set():
+                return
+            yield f"frame={i}\n"
+            yield "out_time=N/A\n"
+            yield "progress=continue\n"
+            self._killed.wait(self._gap)
+        yield "progress=end\n"
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode
+
+    def kill(self) -> None:
+        self.returncode = -9
+        self._killed.set()
+
+
 @pytest.fixture
 def pipeline() -> HookModePipeline:
     cfg = MagicMock()
@@ -316,6 +357,36 @@ class TestEncodeProgress:
                 t0=_now(),
             )
         assert res.ok, f"long progressing encode must succeed: {res.log_tail}"
+
+    def test_alive_but_unparsable_progress_not_killed(self, pipeline, tmp_path):
+        """v1.8.29 — the "วีดีโออัพได้สูงสุดแค่ 5 นาที" bug.
+
+        ffmpeg keeps emitting progress lines (so it's plainly alive),
+        but NONE of them yield a parseable encoded position
+        (``frame=`` / ``out_time=N/A`` only). The OLD watchdog reset
+        solely on a forward out_time, so it would kill this encode at
+        ``encode_stall_timeout_s`` even though the encoder was working
+        — which customers experienced as a hard 5-minute cap. The
+        watchdog now resets on ANY stdout line, so an alive encoder is
+        never killed regardless of clip length.
+        """
+        pipeline.cfg.encode_stall_timeout_s = 1  # 1 s stall window
+        # ~2 s of steady liveness (20 × 0.1 s), well past the 1 s
+        # window, with NO parseable out_time anywhere.
+        proc = _SlowUnparsableProc(n_lines=20, gap_s=0.1)
+        with patch("subprocess.Popen", return_value=proc):
+            res = pipeline._run_ffmpeg_with_progress(
+                cmd=["ffmpeg"],
+                output_path=tmp_path / "out.mp4",
+                duration_s=0.0,
+                timeout_s=600,
+                progress_cb=None,
+                t0=_now(),
+            )
+        assert res.ok, (
+            f"alive-but-unparsable encode must not be killed: {res.log_tail}"
+        )
+        assert proc.returncode != -9, "watchdog wrongly killed a live encode"
 
     def test_stall_watchdog_kills_hung_encode(self, pipeline, tmp_path):
         """A genuinely wedged ffmpeg (emits a little progress, then no
